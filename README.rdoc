@@ -1,0 +1,290 @@
+*NOTE*: This code is published for the purpose of exposing some of my work, and is
+not yet intended to be a fully productized library. Please consider this an
+implementation sample only. The library will be packaged as a full gem real soon now.
+
+
+= Delineate
+
+The delineate gem .......
+
+== About Attribute Maps
+
+ActiveRecord attribute maps provide the ability to expose access to an ActiveRecord
+model's attributes and associations in a customized way. When you specify an
+attribute map, you decouple the model's internal attributes and associations from
+its "presentation" or interface, allowing programmatic interaction with the model
+to remain consistent even when the model implementation or schema changes.
+
+Attribute maps essentially let you create an interface to the ActiveRecord model
+that is different from its internal application interface that a controller might
+typically use. For example, you may wish to involve the model in the API to your
+application. When declaring an attribute map, you decide which attributes and
+nested association model attributes to expose, what their public names are,
+and the access level for each. By invoking simple method calls you can read or
+write these attribute values through the map thereby using it to "render" the
+declared attributes and associations.
+
+Attribute maps are named, which means for a given model you can declare maps
+for any number of use cases. In a single model, for example, you could define
+one map to facilitate implementing a public API, another for a private
+inter-application API, and yet another for data exchange (import and export).
+
+Key features:
+
+* Multiple attribute maps per ActiveRecord model.
+* Map serializers are used for both reading and writing attributes and
+  nested models. Hash, JSON, XML and CSV serializers are built in.
+* A mapped attribute or association can be assigned a name that is different
+  from the name used internally in the model.
+* Access to a mapped attribute or association can be designated read-only
+  or read-write.
+* A mapped association can automatically use the map defined in its
+  model class (merging in modifications), or can completely override
+  the map declared in its model.
+* Special handling for STI: subclasses inherit and/or override maps from
+  their base class, and the appropriate STI class is used when reading
+  attributes.
+* A mapped attribute or association can be declared as optional (or placed
+  in an option group). Optional attributes are serialized only when
+  explicitly included.
+
+== Declaring Attribute Maps
+
+To define an attribute map in an ActiveRecord model you invoke the
++map_attributes+ class method. For example:
+
+    class Post < ActiveRecord::Base
+      belongs_to :author
+      has_many   :post_topics
+      has_many   :topics, :through => :post_topics
+      has_many   :comments
+
+      map_attributes :api do
+        attribute :title
+        attribute :content, :using => :body
+        attribute :created_at, :access => :ro
+
+        association :author
+        association :comments, :optional => true
+      end
+    end
+
+The +map_attributes+ method creates an attribute map with the specified
+name and associates it with the model class. The map DSL specifies which
+attributes and associations are included, their external names, access
+permissions, and other options. In this example, the map is named :api
+and might be used by an API controller to read and write data related
+to the Post resource. Three of the Post attributes are exposed through
+the API as well as the attributes of the +author+ association, according
+to the :api attribute map defined in the Author class. The attributes
+of the +comments+ association are processed only when specifically
+included in subsequent serialization calls.
+
+As a result of this declaration, two Post instance methods are defined
+for accessing the model attributes through the map. So, for example, a
+controller could do:
+
+    p = Post.first
+    attrs = p.api_attributes
+
+to retrieve an attributes hash as processed through the Post attribute map
+named +:api+.
+
+Or do something like:
+
+    p = Post.first
+    attrs = Hash.from_xml(xml_string)
+    p.api_attributes = attrs
+    p.save!
+
+which will update only those attributes and nested models (and according to
+their "public" names) as specified in the :api attribute map.
+
+See the Delineate::AttributeMap class for details about the DSL.
+
+=== Mapping Model Attributes
+
+To declare a model attribute be included in the map, you use the +attribute+
+method on the AttributeMap instance:
+
+   attribute :public_name, :access => :rw, :using => :internal_name
+
+The first parameter is required and is the map-specific public name for the
+attribute. If the :using parameter is not provided, the external name
+and internal name are assumed to be identical. If :using is specified,
+the name provided must be either an existing model attribute, or a method
+that will be called when reading/writing the attribute. In the example above,
+if +internal_name+ is not a model attribute, you must define methods
++internal_name+ and +internal_name=(value)+, the latter being required if the
+attribute is not read-only.
+
+The :access parameter can take the following values:
+
+  :rw This value, which is the default, means that the attribute is read-write.
+  :ro The :ro value designates the attribute as read-only. Attempts to set the
+      attribute's value will silently fail.
+  :w  The attribute value can be set when a model instance is created, 
+      but read-only after that.
+
+The :optional parameter affects the reading of a model attribute:
+
+  attribute :balance, :access => :ro, :optional => true
+
+Optional attributes are not accessed/included when retrieving the mapped
+attributes, unless explicitly requested. This can be useful when there are
+performance implications for calculating an attribute's value for example. You
+can specify a symbol as the value for :optional instead of true. The symbol
+then groups together all attributes with that option group. For example, if
+you specify:
+
+  attribute :balance, :access => :ro, :optional => :compute_balances
+  attribute :total_balance, :access => :ro, :optional => :compute_balances
+
+you then get:
+
+  acct.api_attributes(:include => :balance)           # :balance attribute is included in result
+  acct.api_attributes(:include => :compute_balances)  # Both :balance and :total_balance attributes are returned
+
+The :read and :write parameters are used to define simple accessor methods
+for the attribute. The specified lambda will be defined as a method named
+by the :using parameter. For example:
+
+  attribute :parent, :using => :parent_api,
+            :read => lambda {|a| a.parent ? a.parent.path : nil},
+            :write => lambda {|a, v| a.parent = {:path => v}}
+
+Two methods, +parent_api()+ and +parent_api=(value)+ will be defined on the
+model. In this example, if the :write parameter is ommitted, you must provide
+a write accessor method for the parent_api attribute in the model code.
+
+=== Mapping Model Associations
+
+In addition to attributes, you can specify a model's associations in an
+attribute map. For example:
+
+  class Account < ActiveRecord::Base
+    :belongs_to :account_type
+    map_attributes :api do
+      attribute :name
+      attribute :path, :access => :ro
+      association :type, :using => :account_type
+    end
+  end
+
+The first parameter in the association specification is its mapped name, and the
+optional :using parameter is the internal association name. In the example 
+above the +:account_type+ association is exposed as a nested object
+named 'type'.
+
+When specifying an association mapping, by default the attribute map in
+the association's model class is used to define its attributes and nested
+associations. If you include an attribute defininiton in the association map,
+it will override the spec in the association model:
+
+  class Account < ActiveRecord::Base
+    :belongs_to :account_type
+    map_attributes :api do
+      attribute :path, :access => :ro
+      association :type, :using => :account_type do
+        attribute :name, :access => :ro
+        attribute :description, :access => :ro
+      end
+    end
+  end
+
+In this example, if the AccountType attribute map declared :name as
+read-write, the association map in the Account model overrides that to make :name
+read-only when accessed as a nested object from an Account model. If the
+:description attribute of AccountType had not been specified in the AccountType
+attribute map, the inclusion of it here lets that attribute be exposed in the
+Account attribute map. Note that when overriding an association's attribute, the
+override must completely re-define the attribute's options.
+
+If you want to fully specify an association's attributes, use the
+:override option as follows:
+
+  class Account < ActiveRecord::Base
+    :belongs_to :account_type
+    map_attributes :api do
+      association :type, :using => :account_type, :override => :replace do
+        attribute :name, :access => :ro
+        attribute :description, :access => :ro
+        association :category, :access => :ro :using => :account_category
+          attribute :name
+        end
+      end
+    end
+  end
+
+which re-defines the mapped association as viewed by Account; no merging is
+done with the attribute map defined in the AccountType model. In the example
+above, note the ability to nest associations. For this to work, account_category
+must be declared as an ActiveRecord association in the AccountType class.
+
+Other parameters for mapping associations:
+
+  :access   As with attributes, an association can be declared :ro or :rw (the
+            default). An association that is writeable must have a 
+            an +accepts_nested_attributes_for+ declaration defined in the
+            parent model. This allows attribute writes to contain a nested
+            hash for the association (except for individual association 
+            attributes that are read-only).
+
+  :optional When set to true, the association is not included by default when
+            retrieving/returning the model's mapped attributes.
+
+  :polymorphic  Affects reading only and is relevant when the association class
+            is an STI base class. When set to true, the attribute map of
+            each association record (as defined by its class) is used to
+            specify its included attributes and associations. This means that
+            in a collection association, the returned attribute hashes may be
+            heterogeneous, i.e. vary according to each retrieved record's
+            class. NOTE: when using :polymorphic, you cannot merge/override
+            the association class attribute map.
+
+=== STI Attribute Maps
+
+ActiveRecord STI subclasses inherit the attribute maps from their superclass.
+If you want to include additional subclass attributes, just invoke
+map_attributes in the subclass and define the extra attributes and
+associations. If the subclass wants to completely override/replace the
+superclass map, do:
+
+   class MySubclass < MyBase
+     map_attributes :api, :override => :replace do
+       .
+       .
+     end
+   end
+
+== Serialization and Using Attribute Maps
+
+=== Serializng Out
+
+=== Serializing In
+
+
+== Roadmap
+
+Here are the things I'll be working on next:
+
+* Integrate all the tests and package as a gem
+* More tests around the JSON, XML, and CSV serializers.
+* Design and implementation for importing from CSV through attribute maps.
+* API controller framework taking advantage of attribute maps.
+* Refactor CTI support
+
+== Contributing to delineate
+ 
+* Check out the latest master to make sure the feature hasn't been implemented or the bug hasn't been fixed yet
+* Check out the issue tracker to make sure someone already hasn't requested it and/or contributed it
+* Fork the project
+* Start a feature/bugfix branch
+* Commit and push until you are happy with your contribution
+* Make sure to add tests for it. This is important so I don't break it in a future version unintentionally.
+* Please try not to mess with the Rakefile, version, or history. If you want to have your own version, or is otherwise necessary, that is fine, but please isolate to its own commit so I can cherry-pick around it.
+
+== Copyright
+
+Copyright (c) 2011-2014 Tom Smith. See LICENSE.txt for further details.
+
