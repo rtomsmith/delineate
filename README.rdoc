@@ -1,8 +1,3 @@
-*NOTE*: This code is published for the purpose of exposing some of my work, and is
-not yet intended to be a fully productized library. Please consider this an
-implementation sample only. The library will be packaged as a full gem real soon now.
-
-
 = Delineate
 
 The delineate gem  provides ActiveRecord serialization DSL for mapping model attributes and associations.
