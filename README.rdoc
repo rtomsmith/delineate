@@ -5,7 +5,10 @@ implementation sample only. The library will be packaged as a full gem real soon
 
 = Delineate
 
-The delineate gem .......
+The delineate gem  provides ActiveRecord serialization DSL for mapping model attributes and associations.
+The functionality is similar in concept to that provided by ActiveModel Serializers with many enhancements,
+including built in bi-directional support, i.e. deserialization (parsing) of attributes and nested
+associations.
 
 == About Attribute Maps
 
@@ -268,7 +271,6 @@ superclass map, do:
 
 Here are the things I'll be working on next:
 
-* Integrate all the tests and package as a gem
 * More tests around the JSON, XML, and CSV serializers.
 * Design and implementation for importing from CSV through attribute maps.
 * API controller framework taking advantage of attribute maps.

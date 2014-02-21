@@ -1,0 +1,17 @@
+sqlite3:
+  adapter: sqlite3
+  database: ':memory:'
+
+mysql:
+  adapter: mysql
+  hostname: localhost
+  username: root
+  password:
+  database: delineate_test
+
+postgresql:
+  adapter: postgresql
+  hostname: localhost
+  username: postgres
+  password:
+  database: delineate_test

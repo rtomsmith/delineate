@@ -1,3 +1,5 @@
+require 'active_support/core_ext/hash/deep_dup.rb'
+
 module Delineate
 
   module AttributeMap
@@ -277,7 +279,7 @@ module Delineate
       schemas.push(@klass_name)
       resolve
 
-      columns = (klass.is_cti_subclass? ? klass.cti_base_class.columns_hash : {}).merge klass.columns_hash
+      columns = (klass_cti_subclass? ? klass.cti_base_class.columns_hash : {}).merge klass.columns_hash
       attrs = {}
       @attributes.each do |attr, opts|
         attr_type = (column = columns[model_attribute(attr).to_s]) ? column.type : nil
@@ -434,11 +436,13 @@ module Delineate
 
     def copy(other_map)
       @attributes = other_map.attributes.deep_dup
-      @write_attributes = other_map.write_attributes.deep_dup
+      @write_attributes = other_map.instance_variable_get(:@write_attributes).deep_dup
       @associations = other_map.associations.deep_dup
 
-      map.instance_variable_set(:@resolved, @resolved)
-      map.instance_variable_set(:@sti_baseclass_merged, @sti_baseclass_merged)
+      @resolved = other_map.instance_variable_get(:@resolved)
+      @sti_baseclass_merged = other_map.instance_variable_get(:@sti_baseclass_merged)
+
+      self
     end
 
 
@@ -499,13 +503,15 @@ module Delineate
       end
 
       VALID_ATTR_OPTIONS = [ :model_attr, :access, :optional, :read, :write, :using ]
-      VALID_ATTR_OPTIONS_MULITPLE = [ :access, :optional ]
+      VALID_ATTR_OPTIONS_MULTIPLE = [ :access, :optional ]
 
       def validate_attribute_options(options, arg_count = 1)
         options.assert_valid_keys(VALID_ATTR_OPTIONS) if arg_count == 1
-        options.assert_valid_keys(VALID_ATTR_OPTIONS_MULITPLE) if arg_count > 1
+        options.assert_valid_keys(VALID_ATTR_OPTIONS_MULTIPLE) if arg_count > 1
 
         options[:model_attr] = options.delete(:using) if options.key?(:using)
+        options[:access] = :rw if !options.key?(:access)
+
         validate_access_option(options[:access])
         raise ArgumentError, 'Cannot specify :write option for read-only attribute' if options[:access] == :ro && options[:write]
       end
@@ -515,7 +521,7 @@ module Delineate
       def validate_map_options(options)
         options.assert_valid_keys(VALID_MAP_OPTIONS)
         raise ArgumentError, 'Option :override must be :replace or :merge' unless !options.key?(:override) || [:merge, :replace].include?(options[:override])
-        if options[:override] == :replace && klass.descends_from_active_record? && !klass.is_cti_subclass?
+        if options[:override] == :replace && klass.descends_from_active_record? && !klass_cti_subclass?
           raise ArgumentError, "Cannot specify :override => :replace in map_attributes for #{@klass_name} unless it is a CTI or STI subclass"
         end
       end
@@ -537,7 +543,7 @@ module Delineate
 
       def association_reflection(model_assoc)
         reflection = klass.reflect_on_association(model_assoc)
-        reflection || (klass.cti_base_class.reflect_on_association(model_assoc) if klass.is_cti_subclass?)
+        reflection || (klass.cti_base_class.reflect_on_association(model_assoc) if klass_cti_subclass?)
       end
 
       def is_model_attr?(name)
@@ -591,11 +597,15 @@ module Delineate
         result
       end
 
+      def klass_cti_subclass?
+        klass.respond_to?(:is_cti_subclass) && klass.is_cti_subclass?
+      end
+
       # Checks to see if an assocation specifies a merge, and the association class's
       # attribute map attempts to merge the association parent attribute map.
       def detect_circular_merge(assoc)
         return if assoc.nil? || assoc[:attr_map].nil? || !merge_option?(assoc[:options])
-        return unless map = assoc[:klass_name].constantize.attribute_maps.try(:fetch, @name, nil)
+        return unless (map = assoc[:klass_name].constantize.attribute_maps.try(:fetch, @name, nil))
 
         map.associations.each_value do |a|
           return true if a[:klass_name] == @klass_name && merge_option?(a[:options]) && a[:attr_map]

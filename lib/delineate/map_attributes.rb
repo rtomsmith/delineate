@@ -98,13 +98,13 @@ module ActiveRecord
       map = Delineate::AttributeMap::AttributeMap.new(self.name, map_name, options)
 
       # If this is a CTI subclass, init this map with its base class attributes and associations
-      if is_cti_subclass? and options[:override] != :replace
+      if respond_to?(:is_cti_subclass) and is_cti_subclass? and options[:override] != :replace
         base_class_map = cti_base_class.attribute_map(map_name)
-        raise "Base class for CTI subclass must specify attribute map #{map_name}" if base_class_map.nil?
+        raise "Base class for CTI subclass #{self.name} must specify attribute map #{map_name}" if base_class_map.nil?
 
         base_class_map.attributes.each { |attr, opts| map.attribute(attr, opts.dup) }
         base_class_map.associations.each do |name, assoc|
-          map.association(name, assoc[:options].merge({:attr_map => assoc[:attr_map].try(:dup)}))
+          map.association(name, assoc[:options].merge({:attr_map => assoc[:attr_map].try(:dup)})) unless assoc[:klass_name] == self.name
         end
       end
 
