@@ -98,20 +98,14 @@ module ActiveRecord
       map = Delineate::AttributeMap::AttributeMap.new(self.name, map_name, options)
 
       # If this is a CTI subclass, init this map with its base class attributes and associations
-      if respond_to?(:is_cti_subclass) and is_cti_subclass? and options[:override] != :replace
-        base_class_map = cti_base_class.attribute_map(map_name)
-        raise "Base class for CTI subclass #{self.name} must specify attribute map #{map_name}" if base_class_map.nil?
-
-        base_class_map.attributes.each { |attr, opts| map.attribute(attr, opts.dup) }
-        base_class_map.associations.each do |name, assoc|
-          map.association(name, assoc[:options].merge({:attr_map => assoc[:attr_map].try(:dup)})) unless assoc[:klass_name] == self.name
-        end
-      end
+      inherit_cti_base_class(map, options) if cti_subclass? && options[:override] != :replace
 
       # Parse the map specification DSL
       map.instance_eval(&blk)
 
-      define_attribute_map_methods(map_name)      # define map accessor methods
+      # Define the map accessor methods on this class
+      define_attribute_map_methods(map_name)
+
       attribute_maps[map_name] = map
     end
 
@@ -174,6 +168,20 @@ module ActiveRecord
             set_mapped_attributes(map_name, attr_hash, :hash)
           end
         end
+      end
+
+      # Returns true if this AR class is a CTI subclass.
+      def self.cti_subclass?
+        respond_to?(:is_cti_subclass?) and is_cti_subclass?
+      end
+
+      # Initialize this map with its CTI base class attributes and associations
+      def self.inherit_cti_base_class(map, options)
+        base_class_map = cti_base_class.attribute_map(map.name)
+        raise "Base class for CTI subclass #{self.name} must specify attribute map #{map.name}" unless base_class_map
+
+        map.copy(base_class_map)
+        map.instance_variable_set(:@resolved, false)
       end
 
       def serializer_class(format)

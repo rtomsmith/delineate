@@ -4,6 +4,10 @@ class Object
     yield(value)
     value
   end
+
+  def is_not_a?(klass)
+    !self.is_a?(klass)
+  end
 end
 
 class Hash

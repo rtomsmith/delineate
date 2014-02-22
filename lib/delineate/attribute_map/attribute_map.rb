@@ -7,7 +7,7 @@ module Delineate
   # == Attribute Maps
   #
   # The AttributeMap class provides the ability to expose an ActiveRecord model's
-  # attributes and associations in a customized way. By speciying an attribute map,
+  # attributes and associations in a customized way. By specifying an attribute map,
   # the model's internal attributes and associations can be de-coupled from its
   # presentation or interface, allowing a consumer's interaction with the model to
   # remain consistent even if the model implementation or schema changes.
@@ -28,7 +28,7 @@ module Delineate
   #
   # The map_attributes class method establishes an attribute map that
   # will be used by the model's <map-name>_attributes and <map-name>_attributes= methods.
-  # This map specifies the atrribute names, access permissions, and other options
+  # This map specifies the attribute names, access permissions, and other options
   # as viewed by a user of the model's public API. In the example above, 3 of the
   # the model's attributes are exposed through the API.
   #
@@ -52,7 +52,7 @@ module Delineate
   #
   # :rw   This value, which is the default, means that the attribute is read-write.
   # :ro   The :ro value designates the attribute as read-only. Attempts to set the
-  #       attribute's value will silently fail.
+  #       attribute's value will be ignored.
   # :w    The attribute value can be set, but does not appear when the attributes
   #       read.
   # :none Use this option when merging in a map to ignore the attribute defined in
@@ -261,7 +261,7 @@ module Delineate
     # could be used to generate clients.
     #
     # The schema hash has two keys: +attributes+ and +associations+. The content
-    # for each varies depeding on the +access+ parameter which can take values
+    # for each varies depending on the +access+ parameter which can take values
     # of :read, :write, or nil. The +attributes+ hash looks like this:
     #
     #   :read or :write   { :name => :string, :age => :integer }
@@ -273,39 +273,16 @@ module Delineate
     #   nil               { :posts => {:access => :rw}, :comments => {:optional => true, :access=>:ro} }
     #
     # This method uses the +columns_hash+ provided by ActiveRecord. You can implement
-    # that method in your custom models if you want to customize the schema output.
+    # that method in your models if you want to customize the schema output.
     #
-    def schema(access = nil, schemas = [])
-      schemas.push(@klass_name)
+    def schema(access = nil, schema_classes = [])
+      schema_classes.push(@klass_name)
       resolve
 
-      columns = (klass_cti_subclass? ? klass.cti_base_class.columns_hash : {}).merge klass.columns_hash
-      attrs = {}
-      @attributes.each do |attr, opts|
-        attr_type = (column = columns[model_attribute(attr).to_s]) ? column.type : nil
-        if (access == :read && opts[:access] != :w) or (access == :write && opts[:access] != :ro)
-          attrs[attr] = attr_type
-        elsif access.nil?
-          attrs[attr] = {:type => attr_type, :access => opts[:access] || :rw}
-        end
-      end
+      attrs = schema_attributes(access)
+      associations = schema_associations(access, schema_classes)
 
-      associations = {}
-      @associations.each do |assoc_name, assoc|
-        include_assoc = (access == :read && assoc[:options][:access] != :w) || (access == :write && assoc[:options][:access] != :ro) || access.nil?
-        if include_assoc
-          associations[assoc_name] = {}
-          associations[assoc_name][:optional] = true if assoc[:options][:optional]
-        end
-
-        associations[assoc_name][:access] = (assoc[:options][:access] || :rw) if access.nil?
-
-        if include_assoc && assoc[:attr_map] && assoc[:attr_map] != assoc[:klass_name].to_s.constantize.attribute_map(@name)
-          associations[assoc_name].merge! assoc[:attr_map].schema(access, schemas) unless schemas.include?(assoc[:klass_name])
-        end
-      end
-
-      schemas.pop
+      schema_classes.pop
       {:attributes => attrs, :associations => associations}
     end
 
@@ -365,10 +342,10 @@ module Delineate
       raise "Cannot process map #{@klass_name}:#{@name} for write because it has not been resolved" if !resolve
 
       (attrs.is_a?(Array) ? attrs : [attrs]).each do |attr_hash|
-        raise ArgumentError, "Expected attributes hash but received #{attr_hash.inspect}" if !attr_hash.is_a?(Hash)
+        raise ArgumentError, "Expected attributes hash but received #{attr_hash.inspect}" if attr_hash.is_not_a?(Hash)
 
         attr_hash.dup.symbolize_keys.each do |k, v|
-          if assoc = @associations[k]
+          if (assoc = @associations[k])
             map_association_attributes_for_write(assoc, attr_hash, k)
           else
             if @write_attributes.has_key?(k)
@@ -491,7 +468,11 @@ module Delineate
         end
       end
 
+      VALID_MAP_OPTIONS = [ :override, :no_primary_key_attr, :no_destroy_attr ]
       VALID_ASSOC_OPTIONS = [ :model_attr, :using, :override, :polymorphic, :access, :optional, :attr_map ]
+      VALID_ATTR_OPTIONS = [ :model_attr, :access, :optional, :read, :write, :using ]
+      VALID_ATTR_OPTIONS_MULTIPLE = [ :access, :optional ]
+      VALID_ACCESS_OPTIONS = [:ro, :rw, :w, :none]
 
       def validate_association_options(options, blk)
         options.assert_valid_keys(VALID_ASSOC_OPTIONS)
@@ -499,40 +480,35 @@ module Delineate
         options[:model_attr] = options.delete(:using) if options.key?(:using)
 
         raise ArgumentError, 'Cannot specify :override or provide block with :polymorphic' if options[:polymorphic] and (blk or options[:override])
-        raise ArgumentError, 'Option :override must be :replace or :merge' unless !options.key?(:override) || [:merge, :replace].include?(options[:override])
+        raise ArgumentError, 'Option :override must = :replace or :merge' unless !options.key?(:override) || [:merge, :replace].include?(options[:override])
       end
-
-      VALID_ATTR_OPTIONS = [ :model_attr, :access, :optional, :read, :write, :using ]
-      VALID_ATTR_OPTIONS_MULTIPLE = [ :access, :optional ]
 
       def validate_attribute_options(options, arg_count = 1)
         options.assert_valid_keys(VALID_ATTR_OPTIONS) if arg_count == 1
         options.assert_valid_keys(VALID_ATTR_OPTIONS_MULTIPLE) if arg_count > 1
 
         options[:model_attr] = options.delete(:using) if options.key?(:using)
-        options[:access] = :rw if !options.key?(:access)
+        options[:access] = :rw unless options.key?(:access)
 
         validate_access_option(options[:access])
         raise ArgumentError, 'Cannot specify :write option for read-only attribute' if options[:access] == :ro && options[:write]
       end
 
-      VALID_MAP_OPTIONS = [ :override, :no_primary_key_attr, :no_destroy_attr ]
-
       def validate_map_options(options)
         options.assert_valid_keys(VALID_MAP_OPTIONS)
         raise ArgumentError, 'Option :override must be :replace or :merge' unless !options.key?(:override) || [:merge, :replace].include?(options[:override])
-        if options[:override] == :replace && klass.descends_from_active_record? && !klass_cti_subclass?
-          raise ArgumentError, "Cannot specify :override => :replace in map_attributes for #{@klass_name} unless it is a CTI or STI subclass"
+        if options[:override] == :replace && !klass_sti_subclass? && !klass_cti_subclass?
+          raise ArgumentError, "Cannot specify :override => :replace in map_attributes for #{@klass_name} unless it is an STI or CTI subclass"
         end
       end
 
       def validate_access_option(opt)
-        raise ArgumentError, 'Invalid value for :access option' if opt and ![:ro, :rw, :w, :none].include?(opt)
+        raise ArgumentError, 'Invalid value for :access option' if opt and !VALID_ACCESS_OPTIONS.include?(opt)
       end
 
       def get_model_association(association)
         returning association_reflection(association) do |reflection|
-          raise ArgumentError, "Association '#{association}' in model #{@klass_name} is not defined yet" if reflection.nil?
+          raise ArgumentError, "Association '#{association}' in model #{@klass_name} is not defined" if reflection.nil?
           begin
             reflection.klass
           rescue
@@ -584,7 +560,7 @@ module Delineate
       def resolve_sti_baseclass(must_resolve, resolving)
         result = true
 
-        if !klass.descends_from_active_record? && !@sti_baseclass_merged && result && @options[:override] != :replace
+        if klass_sti_subclass? && !@sti_baseclass_merged && merge_option?(@options)
           if klass.superclass.attribute_maps.try(:fetch, @name, nil).try(:resolve, must_resolve, resolving)
             @resolved = @sti_baseclass_merged = true
             self.copy(klass.superclass.attribute_maps[@name].dup.merge!(self))
@@ -597,11 +573,15 @@ module Delineate
         result
       end
 
+      def klass_sti_subclass?
+        !klass.descends_from_active_record?
+      end
+
       def klass_cti_subclass?
         klass.respond_to?(:is_cti_subclass) && klass.is_cti_subclass?
       end
 
-      # Checks to see if an assocation specifies a merge, and the association class's
+      # Checks to see if an association specifies a merge, and the association class's
       # attribute map attempts to merge the association parent attribute map.
       def detect_circular_merge(assoc)
         return if assoc.nil? || assoc[:attr_map].nil? || !merge_option?(assoc[:options])
@@ -678,7 +658,39 @@ module Delineate
         end
       end
 
-      # The params hash generated from XML/JSON needs to be translated to a form
+      def schema_attributes(access)
+        columns = (klass_cti_subclass? ? klass.cti_base_class.columns_hash : {}).merge klass.columns_hash
+
+        returning({}) do |attrs|
+          @attributes.each do |attr, opts|
+            attr_type = (column = columns[model_attribute(attr).to_s]) ? column.type : nil
+            if (access == :read && opts[:access] != :w) or (access == :write && opts[:access] != :ro)
+              attrs[attr] = attr_type
+            elsif access.nil?
+              attrs[attr] = {:type => attr_type, :access => opts[:access] || :rw}
+            end
+          end
+        end
+      end
+
+      def schema_associations(access, schema_classes)
+        returning({}) do |associations|
+          @associations.each do |assoc_name, assoc|
+            include_assoc = (access == :read && assoc[:options][:access] != :w) || (access == :write && assoc[:options][:access] != :ro) || access.nil?
+            next unless include_assoc
+
+            associations[assoc_name] = {}
+            associations[assoc_name][:optional] = true if assoc[:options][:optional]
+            associations[assoc_name][:access] = (assoc[:options][:access] || :rw) if access.nil?
+
+            if assoc[:attr_map] && assoc[:attr_map] != assoc[:klass_name].to_s.constantize.attribute_map(@name)
+              associations[assoc_name].merge!(assoc[:attr_map].schema(access, schema_classes)) unless schema_classes.include?(assoc[:klass_name])
+            end
+          end
+        end
+      end
+
+      # The Rails params hash generated from XML/JSON needs to be translated to a form
       # compatible with ActiveRecord nested attributes, specifically with respect
       # to association collections. For example, when the XML input is:
       #
@@ -695,7 +707,7 @@ module Delineate
       #
       #   {"entries"=>{"entry"=>[{... entry 1 stuff...}, {... entry 2 stuff...}]}}
       #
-      # which is incompatible with ActiveRecord nested attrributes. So this method
+      # which is incompatible with ActiveRecord nested attributes. So this method
       # detects that pattern, and translates the above to:
       #
       #   {"entries"=> [{... entry 1 stuff...}, {... entry 2 stuff...}]}
