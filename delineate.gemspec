@@ -11,7 +11,7 @@ Gem::Specification.new do |s|
   s.required_rubygems_version = Gem::Requirement.new(">= 0") if s.respond_to? :required_rubygems_version=
   s.require_paths = ["lib"]
   s.authors = ["Tom Smith"]
-  s.date = "2014-02-22"
+  s.date = "2014-02-23"
   s.description = "ActiveRecord serializer DSL for mapping model attributes and associations. Similar to  ActiveModel Serializers with many enhancements including bi-directional support, i.e. deserialization."
   s.email = "tsmith@landfall.com"
   s.extra_rdoc_files = [
@@ -31,12 +31,14 @@ Gem::Specification.new do |s|
     "lib/class_inheritable_attributes.rb",
     "lib/core_extensions.rb",
     "lib/delineate.rb",
-    "lib/delineate/attribute_map/attribute_map.rb",
-    "lib/delineate/attribute_map/csv_serializer.rb",
-    "lib/delineate/attribute_map/json_serializer.rb",
-    "lib/delineate/attribute_map/map_serializer.rb",
-    "lib/delineate/attribute_map/xml_serializer.rb",
+    "lib/delineate/attribute_map.rb",
     "lib/delineate/map_attributes.rb",
+    "lib/delineate/map_serializer.rb",
+    "lib/delineate/schema.rb",
+    "lib/delineate/serialization.rb",
+    "lib/delineate/serializers/csv_serializer.rb",
+    "lib/delineate/serializers/json_serializer.rb",
+    "lib/delineate/serializers/xml_serializer.rb",
     "spec/database.yml",
     "spec/delineate_spec.rb",
     "spec/spec_helper.rb",
