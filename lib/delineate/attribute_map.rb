@@ -1,5 +1,6 @@
 require 'active_support/core_ext/hash/deep_dup.rb'
 
+require 'delineate/resolve'
 require 'delineate/serialization'
 require 'delineate/schema'
 
@@ -222,12 +223,10 @@ module Delineate
           @attributes[name] = options
 
           model_attr = (options[:model_attr] || name).to_sym
-          model_attr = define_attr_methods(name, model_attr, options) unless is_model_attr?(model_attr)
+          model_attr = define_attr_methods(name, model_attr, options)
 
           if options[:access] != :ro
-            if model_attr.to_s != klass.primary_key && !klass.accessible_attributes.detect { |a| a == model_attr.to_s }
-              raise "Expected 'attr_accessible :#{model_attr}' in #{@klass_name}"
-            end
+            validate_attr_writable(model_attr)
             @write_attributes[name] = model_attr
           end
         end
@@ -246,12 +245,7 @@ module Delineate
 
       attr_map.instance_eval(&blk) if block_given?
 
-      if !merge_option?(options) && attr_map.empty?
-        raise ArgumentError, "Map association '#{name}' in class #{@klass_name} specifies :replace but has empty block"
-      end
-      if options[:access] != :ro and !klass.accessible_attributes.include?(model_attr.to_s+'_attributes')
-        raise "Expected attr_accessible and/or accepts_nested_attributes_for :#{model_attr} in #{@klass_name} model"
-      end
+      validate_assoc_map(name, model_attr, attr_map, options)
 
       @associations[name] = {:klass_name => reflection.class_name, :options => options,
                              :attr_map => attr_map.empty? ? nil : attr_map,
@@ -295,31 +289,6 @@ module Delineate
       @sti_baseclass_merged = other_map.instance_variable_get(:@sti_baseclass_merged)
 
       self
-    end
-
-    def resolved?
-      @resolved
-    end
-
-    # Will raise an exception of the map cannot be fully resolved
-    def resolve!
-      resolve(:must_resolve)
-      self
-    end
-
-    # Attempts to resolve the map and the maps it depends on. If must_resolve is truthy, will
-    # raise an exception if map cannot be resolved.
-    def resolve(must_resolve = false, resolving = [])
-      return true if @resolved
-      return true if resolving.include?(@klass_name)    # prevent infinite recursion
-
-      resolving.push(@klass_name)
-
-      result = resolve_associations(must_resolve, resolving)
-      result = false unless resolve_sti_baseclass(must_resolve, resolving)
-
-      resolving.pop
-      @resolved = result
     end
 
 
@@ -411,70 +380,31 @@ module Delineate
         raise ArgumentError, 'Invalid value for :access option' if opt and !VALID_ACCESS_OPTIONS.include?(opt)
       end
 
+      def validate_attr_writable(attr_name)
+        if attr_name.to_s != klass.primary_key && !klass.accessible_attributes.detect { |a| a == attr_name.to_s }
+          raise "Expected 'attr_accessible :#{attr_name}' in #{@klass_name}"
+        end
+      end
+
+      def validate_assoc_map(name, model_attr, attr_map, options)
+        if !merge_option?(options) && attr_map.empty?
+          raise ArgumentError, "Map association '#{name}' in class #{@klass_name} specifies :replace but has empty block"
+        end
+        if options[:access] != :ro and !klass.accessible_attributes.include?(model_attr.to_s+'_attributes')
+          raise "Expected attr_accessible and/or accepts_nested_attributes_for :#{model_attr} in #{@klass_name} model"
+        end
+      end
+
       def validate(map, class_name)
         raise(NameError, "Expected attribute map :#{@name} to be defined for class '#{class_name}'") if map.nil?
         map.resolve! unless map.resolved?
         map
       end
 
-      def resolve_associations(must_resolve, resolving)
-        result = true
-
-        @associations.each do |assoc_name, assoc|
-          if detect_circular_merge(assoc)
-            raise "Detected attribute map circular merge references: class=#{@klass_name}, association=#{assoc_name}"
-          end
-
-          assoc_map = assoc[:attr_map] || assoc[:klass_name].constantize.attribute_maps.try(:fetch, @name, nil)
-          if assoc_map && !assoc_map.resolved?
-            if assoc_map.resolve(must_resolve, resolving) && merge_option?(assoc[:options]) && assoc[:attr_map]
-              merge_map = assoc[:klass_name].constantize.attribute_maps[@name]
-              assoc_map = merge_map.dup.merge!(assoc_map, :with_options => true, :with_state => true)
-            end
-          end
-          assoc[:attr_map] = assoc_map
-
-          if assoc_map.nil? or !assoc_map.resolve(false, resolving)
-            result = false
-            raise "Cannot resolve map for association :#{assoc_name} in #{@klass_name}:#{@name} map" if must_resolve
-          end
-        end
-
-        result
-      end
-
-      # If this is the map of an STI subclass, inherit/merge the map from the base class
-      def resolve_sti_baseclass(must_resolve, resolving)
-        result = true
-
-        if klass_sti_subclass? && !@sti_baseclass_merged && merge_option?(@options)
-          if klass.superclass.attribute_maps.try(:fetch, @name, nil).try(:resolve, must_resolve, resolving)
-            @resolved = @sti_baseclass_merged = true
-            self.copy(klass.superclass.attribute_maps[@name].dup.merge!(self))
-          else
-            result = false
-            raise "Can't resolve base class map for #{@klass_name}:#{@name} map" if must_resolve
-          end
-        end
-
-        result
-      end
-
-      # Checks to see if an association specifies a merge, and the association class's
-      # attribute map attempts to merge the association parent attribute map.
-      def detect_circular_merge(assoc)
-        return if assoc.nil? || assoc[:attr_map].nil? || !merge_option?(assoc[:options])
-        return unless (map = assoc[:klass_name].constantize.attribute_maps.try(:fetch, @name, nil))
-
-        map.associations.each_value do |a|
-          return true if a[:klass_name] == @klass_name && merge_option?(a[:options]) && a[:attr_map]
-        end
-
-        false
-      end
-
       # Defines custom read/write attribute methods
       def define_attr_methods(name, model_attr, options)
+        return model_attr if is_model_attr?(model_attr)
+
         read_model_attr  = define_attr_reader_method(name, model_attr, options)
         write_model_attr = define_attr_writer_method(name, model_attr, options)
 
@@ -537,6 +467,7 @@ module Delineate
         end
       end
 
+    include Resolve
     include Serialization
     include Schema
 
