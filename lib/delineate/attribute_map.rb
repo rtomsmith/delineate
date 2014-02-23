@@ -1,8 +1,9 @@
 require 'active_support/core_ext/hash/deep_dup.rb'
 
-module Delineate
+require 'delineate/serialization'
+require 'delineate/schema'
 
-  module AttributeMap
+module Delineate
 
   # == Attribute Maps
   #
@@ -238,7 +239,7 @@ module Delineate
       validate_association_options(options, block_given?)
 
       model_attr = (options[:model_attr] || name).to_sym
-      reflection = get_model_association(model_attr)
+      reflection = model_association_reflection(model_attr)
 
       attr_map = options.delete(:attr_map) || AttributeMap.new(reflection.class_name, @name)
       attr_map.instance_variable_set(:@options, {:override => options[:override]}) if options[:override]
@@ -255,132 +256,6 @@ module Delineate
       @associations[name] = {:klass_name => reflection.class_name, :options => options,
                              :attr_map => attr_map.empty? ? nil : attr_map,
                              :collection => (reflection.macro == :has_many || reflection.macro == :has_and_belongs_to_many)}
-    end
-
-    # Returns a schema hash according to the attribute map. This information
-    # could be used to generate clients.
-    #
-    # The schema hash has two keys: +attributes+ and +associations+. The content
-    # for each varies depending on the +access+ parameter which can take values
-    # of :read, :write, or nil. The +attributes+ hash looks like this:
-    #
-    #   :read or :write   { :name => :string, :age => :integer }
-    #   :nil              { :name => {:type => :string, :access => :rw}, :age => { :type => :integer, :access => :rw} }
-    #
-    # The +associations+ hash looks like this:
-    #
-    #   :read or :write   { :posts => {}, :comments => {:optional => true} }
-    #   nil               { :posts => {:access => :rw}, :comments => {:optional => true, :access=>:ro} }
-    #
-    # This method uses the +columns_hash+ provided by ActiveRecord. You can implement
-    # that method in your models if you want to customize the schema output.
-    #
-    def schema(access = nil, schema_classes = [])
-      schema_classes.push(@klass_name)
-      resolve
-
-      attrs = schema_attributes(access)
-      associations = schema_associations(access, schema_classes)
-
-      schema_classes.pop
-      {:attributes => attrs, :associations => associations}
-    end
-
-    def resolved?
-      @resolved
-    end
-
-    # Will raise an exception of the map cannot be fully resolved
-    def resolve!
-      resolve(:must_resolve)
-      self
-    end
-
-    # Attempts to resolve the map and the maps it depends on. If must_resolve is truthy, will
-    # raise an exception if map cannot be resolved.
-    def resolve(must_resolve = false, resolving = [])
-      return true if @resolved
-      return true if resolving.include?(@klass_name)    # prevent infinite recursion
-
-      resolving.push(@klass_name)
-
-      result = resolve_associations(must_resolve, resolving)
-      result = false unless resolve_sti_baseclass(must_resolve, resolving)
-
-      resolving.pop
-      @resolved = result
-    end
-
-    # Values for includes param:
-    #   nil = include all attributes
-    #   [] = do not include optional attributes
-    #   [...] = include the specified optional attributes
-    def serializable_attribute_names(includes = nil)
-      attribute_names = @attributes.keys.reject {|k| @attributes[k][:access] == :w}
-      return attribute_names if includes.nil?
-
-      attribute_names.delete_if do |key|
-        (option = @attributes[key][:optional]) && !includes.include?(key) && !includes.include?(option)
-      end
-    end
-
-    def serializable_association_names(includes = nil)
-      return @associations.keys if includes.nil?
-
-      @associations.inject([]) do |assoc_names, assoc|
-        assoc_names << assoc.first if !(option = assoc.last[:options][:optional]) || includes.include?(assoc.first) || includes.include?(option)
-        assoc_names
-      end
-    end
-
-    # Given the specified api attributes hash, translates the attribute names to
-    # the corresponding model attribute names. Recursive translation on associations
-    # is performed. API attributes that are defined as read-only are removed.
-    #
-    # Input can be a single hash or an array of hashes.
-    def map_attributes_for_write(attrs, options = nil)
-      raise "Cannot process map #{@klass_name}:#{@name} for write because it has not been resolved" if !resolve
-
-      (attrs.is_a?(Array) ? attrs : [attrs]).each do |attr_hash|
-        raise ArgumentError, "Expected attributes hash but received #{attr_hash.inspect}" if attr_hash.is_not_a?(Hash)
-
-        attr_hash.dup.symbolize_keys.each do |k, v|
-          if (assoc = @associations[k])
-            map_association_attributes_for_write(assoc, attr_hash, k)
-          else
-            if @write_attributes.has_key?(k)
-              attr_hash.rename_key!(k, @write_attributes[k]) if @write_attributes[k] != k
-            else
-              attr_hash.delete(k)
-            end
-          end
-        end
-      end
-
-      attrs
-    end
-
-    def attribute_value(record, name)
-      model_attr = model_attribute(name)
-      model_attr == :type ? record.read_attribute(:type) : record.send(model_attr)
-    end
-
-    def model_association(name)
-      @associations[name][:options][:model_attr] || name
-    end
-
-    # Access the map of an association defined in this map. Will throw an
-    # error if the map cannot be found and resolved.
-    def association_attribute_map(association)
-      assoc = @associations[association]
-      validate(assoc_attr_map(assoc), assoc[:klass_name])
-      assoc_attr_map(assoc)
-    end
-
-    def validate(map, class_name)
-      raise(NameError, "Expected attribute map :#{@name} to be defined for class '#{class_name}'") if map.nil?
-      map.resolve! unless map.resolved?
-      map
     end
 
     # Merges another AttributeMap instance into this instance.
@@ -422,6 +297,31 @@ module Delineate
       self
     end
 
+    def resolved?
+      @resolved
+    end
+
+    # Will raise an exception of the map cannot be fully resolved
+    def resolve!
+      resolve(:must_resolve)
+      self
+    end
+
+    # Attempts to resolve the map and the maps it depends on. If must_resolve is truthy, will
+    # raise an exception if map cannot be resolved.
+    def resolve(must_resolve = false, resolving = [])
+      return true if @resolved
+      return true if resolving.include?(@klass_name)    # prevent infinite recursion
+
+      resolving.push(@klass_name)
+
+      result = resolve_associations(must_resolve, resolving)
+      result = false unless resolve_sti_baseclass(must_resolve, resolving)
+
+      resolving.pop
+      @resolved = result
+    end
+
 
     protected
 
@@ -429,43 +329,48 @@ module Delineate
         @klass ||= @klass_name.constantize
       end
 
+      def klass_sti_subclass?
+        !klass.descends_from_active_record?
+      end
+
+      def klass_cti_subclass?
+        klass.respond_to?(:is_cti_subclass?) && klass.is_cti_subclass?
+      end
+
       def empty?
         @attributes.empty? && @associations.empty?
+      end
+
+      def is_model_attr?(name)
+        klass.column_names.include?(name.to_s)
       end
 
       def model_attribute(name)
         @attributes[name][:model_attr] || name
       end
 
+      def model_association_reflection(association)
+        returning association_reflection(association) do |reflection|
+          raise ArgumentError, "Association '#{association}' in model #{@klass_name} is not defined" if reflection.nil?
+          begin
+            reflection.klass
+          rescue
+            raise NameError, "Cannot resolve association class '#{reflection.class_name}' from model '#{@klass_name}'"
+          end
+        end
+      end
+
+      def association_reflection(model_assoc)
+        reflection = klass.reflect_on_association(model_assoc)
+        reflection || (klass.cti_base_class.reflect_on_association(model_assoc) if klass_cti_subclass?)
+      end
+
       def assoc_attr_map(assoc)
         assoc[:attr_map] || assoc[:klass_name].constantize.attribute_map(@name)
       end
 
-      # Map an association's attributes for writing. Will call
-      # map_attributes_for_write (resulting in recursion) on the association
-      # if it's a has_one or belongs_to, or calls map_attributes_for_write
-      # on each element of a has_many collection.
-      def map_association_attributes_for_write(assoc, attr_hash, key)
-        if assoc[:options][:access] == :ro
-          attr_hash.delete(key)       # Writes not allowed
-        else
-          assoc_attrs = attr_hash[key]
-          if assoc[:collection]
-            attr_hash[key] = xlate_params_for_nested_attributes_collection(assoc_attrs)
-
-            # Iterate thru each element in the collection and map its attributes
-            attr_hash[key].each do |entry_attrs|
-              entry_attrs = entry_attrs[1] if entry_attrs.is_a?(Array)
-              assoc_attr_map(assoc).map_attributes_for_write(entry_attrs)
-            end
-          else
-            # Association is a one-to-one; map its attributes
-            assoc_attr_map(assoc).map_attributes_for_write(assoc_attrs)
-          end
-
-          model_attr = assoc[:options][:model_attr] || key
-          attr_hash[(model_attr.to_s + '_attributes').to_sym] = attr_hash.delete(key)
-        end
+      def merge_option?(options)
+        options[:override] != :replace
       end
 
       VALID_MAP_OPTIONS = [ :override, :no_primary_key_attr, :no_destroy_attr ]
@@ -506,28 +411,10 @@ module Delineate
         raise ArgumentError, 'Invalid value for :access option' if opt and !VALID_ACCESS_OPTIONS.include?(opt)
       end
 
-      def get_model_association(association)
-        returning association_reflection(association) do |reflection|
-          raise ArgumentError, "Association '#{association}' in model #{@klass_name} is not defined" if reflection.nil?
-          begin
-            reflection.klass
-          rescue
-            raise NameError, "Cannot resolve association class '#{reflection.class_name}' from model '#{@klass_name}'"
-          end
-        end
-      end
-
-      def association_reflection(model_assoc)
-        reflection = klass.reflect_on_association(model_assoc)
-        reflection || (klass.cti_base_class.reflect_on_association(model_assoc) if klass_cti_subclass?)
-      end
-
-      def is_model_attr?(name)
-        klass.column_names.include?(name.to_s)
-      end
-
-      def merge_option?(options)
-        options[:override] != :replace
+      def validate(map, class_name)
+        raise(NameError, "Expected attribute map :#{@name} to be defined for class '#{class_name}'") if map.nil?
+        map.resolve! unless map.resolved?
+        map
       end
 
       def resolve_associations(must_resolve, resolving)
@@ -571,14 +458,6 @@ module Delineate
         end
 
         result
-      end
-
-      def klass_sti_subclass?
-        !klass.descends_from_active_record?
-      end
-
-      def klass_cti_subclass?
-        klass.respond_to?(:is_cti_subclass) && klass.is_cti_subclass?
       end
 
       # Checks to see if an association specifies a merge, and the association class's
@@ -658,69 +537,8 @@ module Delineate
         end
       end
 
-      def schema_attributes(access)
-        columns = (klass_cti_subclass? ? klass.cti_base_class.columns_hash : {}).merge klass.columns_hash
-
-        returning({}) do |attrs|
-          @attributes.each do |attr, opts|
-            attr_type = (column = columns[model_attribute(attr).to_s]) ? column.type : nil
-            if (access == :read && opts[:access] != :w) or (access == :write && opts[:access] != :ro)
-              attrs[attr] = attr_type
-            elsif access.nil?
-              attrs[attr] = {:type => attr_type, :access => opts[:access] || :rw}
-            end
-          end
-        end
-      end
-
-      def schema_associations(access, schema_classes)
-        returning({}) do |associations|
-          @associations.each do |assoc_name, assoc|
-            include_assoc = (access == :read && assoc[:options][:access] != :w) || (access == :write && assoc[:options][:access] != :ro) || access.nil?
-            next unless include_assoc
-
-            associations[assoc_name] = {}
-            associations[assoc_name][:optional] = true if assoc[:options][:optional]
-            associations[assoc_name][:access] = (assoc[:options][:access] || :rw) if access.nil?
-
-            if assoc[:attr_map] && assoc[:attr_map] != assoc[:klass_name].to_s.constantize.attribute_map(@name)
-              associations[assoc_name].merge!(assoc[:attr_map].schema(access, schema_classes)) unless schema_classes.include?(assoc[:klass_name])
-            end
-          end
-        end
-      end
-
-      # The Rails params hash generated from XML/JSON needs to be translated to a form
-      # compatible with ActiveRecord nested attributes, specifically with respect
-      # to association collections. For example, when the XML input is:
-      #
-      #   <entries>
-      #     <entry>
-      #       ... entry 1 stuff ...
-      #     </entry>
-      #     <entry>
-      #       ... entry 2 stuff ...
-      #     </entry>
-      #   </entries>
-      #
-      # Rails constructs the resulting params hash as:
-      #
-      #   {"entries"=>{"entry"=>[{... entry 1 stuff...}, {... entry 2 stuff...}]}}
-      #
-      # which is incompatible with ActiveRecord nested attributes. So this method
-      # detects that pattern, and translates the above to:
-      #
-      #   {"entries"=> [{... entry 1 stuff...}, {... entry 2 stuff...}]}
-      #
-      def xlate_params_for_nested_attributes_collection(assoc_attrs)
-        if assoc_attrs.is_a?(Hash) and assoc_attrs.keys.size == 1 and assoc_attrs[assoc_attrs.keys.first].is_a?(Array)
-          assoc_attrs[assoc_attrs.keys.first]
-        else
-          assoc_attrs
-        end
-      end
-
-  end
+    include Serialization
+    include Schema
 
   end
 end

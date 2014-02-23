@@ -1,5 +1,5 @@
 module Delineate
-  module AttributeMap
+  module Serializers
 
     # AttributeMap serializer that handles XML as the external data format.
     class XmlSerializer < MapSerializer

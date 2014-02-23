@@ -481,7 +481,7 @@ describe "AttributeMap Serializer" do
 end
 
 
-describe "AttributeMap Deerializer" do
+describe "AttributeMap Deserializer" do
   it "handles inputting attributes from a hash for new objects" do
     h = {:title => "New title", :content => "New content"}
 
@@ -657,6 +657,20 @@ describe "AttributeMap Deerializer" do
     attrs[:comments][0].should_not have_key(:type)
     attrs[:comments][1].should_not have_key(:type)
     attrs[:comments].last[:type].should == 'Reply'
+  end
+
+end
+
+describe "AttributeMap Schema" do
+  it "shows a map schema" do
+    expected_schema = {:attributes=>
+                            {:id=>{:type=>:integer, :access=>:rw}, :title=>{:type=>:string, :access=>:rw}, :content=>{:type=>:text, :access=>:rw}, :created_at=>{:type=>:datetime, :access=>:ro}, :heavy_attr=>{:type=>nil, :access=>:ro}},
+                       :associations=>
+                            {:author=>{:access=>:rw, :attributes=>{:id=>{:type=>:integer, :access=>:rw}, :first_name=>{:type=>:string, :access=>:rw}, :last_name=>{:type=>:string, :access=>:rw}, :name=>{:type=>nil, :access=>:ro}}, :associations=>{:email=>{:access=>:rw}, :posts=>{:optional=>true, :access=>:rw}, :author_group=>{:optional=>true, :access=>:rw}}},
+                             :topics=>{:access=>:rw}, :comments=>{:optional=>true, :access=>:rw}
+                            }
+    }
+    expect(Post.attribute_map(:api).schema).to eql(expected_schema)
   end
 
 end

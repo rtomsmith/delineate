@@ -1,5 +1,3 @@
-require 'delineate/attribute_map/attribute_map'
-require 'delineate/attribute_map/map_serializer'
 require 'class_inheritable_attributes'
 
 module ActiveRecord
@@ -95,7 +93,7 @@ module ActiveRecord
     # especially after the model class's associations and accepts_nested_attributes_for.
     #
     def self.map_attributes(map_name, options = {}, &blk)
-      map = Delineate::AttributeMap::AttributeMap.new(self.name, map_name, options)
+      map = Delineate::AttributeMap.new(self.name, map_name, options)
 
       # If this is a CTI subclass, init this map with its base class attributes and associations
       inherit_cti_base_class(map, options) if cti_subclass? && options[:override] != :replace
@@ -186,9 +184,9 @@ module ActiveRecord
 
       def serializer_class(format)
         if format == :hash
-          Delineate::AttributeMap::MapSerializer
+          Delineate::MapSerializer
         else
-          "Delineate::AttributeMap::#{format.to_s.camelize}Serializer".constantize
+          "Delineate::Serializers::#{format.to_s.camelize}Serializer".constantize
         end
       end
 
@@ -199,7 +197,7 @@ module ActiveRecord
           raise ArgumentError, "Missing attribute map :#{map_name} for class #{self.class.name}" if map.nil?
         end
 
-        raise ArgumentError, "The map parameter :#{map_name} for class #{self.class.name} is invalid" if !map.is_a?(Delineate::AttributeMap::AttributeMap)
+        raise ArgumentError, "The map parameter :#{map_name} for class #{self.class.name} is invalid" if !map.is_a?(Delineate::AttributeMap)
         raise ArgumentError, 'Invalid format parameter' unless [:hash, :csv, :xml, :json].include?(format)
         map
       end
