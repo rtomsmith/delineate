@@ -8,6 +8,7 @@ module ActiveRecord
 
     # Collection of declared attribute maps for the model class
     class_inheritable_accessor :attribute_maps
+    #class_attribute :attribute_maps
     self.attribute_maps = {}
 
     # The map_attributes method lets an ActiveRecord model class define a set
@@ -112,7 +113,7 @@ module ActiveRecord
     end
 
     def attribute_map(map_name)
-      self.class.attribute_maps[map_name]
+      self.class.attribute_map(map_name)
     end
 
     # Returns the attributes as specified in the attribut map. The +format+ paramater
@@ -179,6 +180,7 @@ module ActiveRecord
         raise "Base class for CTI subclass #{self.name} must specify attribute map #{map.name}" unless base_class_map
 
         map.copy(base_class_map)
+        map.associations.delete_if {|k, a| a[:klass_name] == self.name}
         map.instance_variable_set(:@resolved, false)
       end
 
