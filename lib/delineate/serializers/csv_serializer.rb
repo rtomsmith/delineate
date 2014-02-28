@@ -14,8 +14,8 @@ module Delineate
       # of the attributes.
       def serialize(options = {})
         opts = options[:include_header] ?
-          {:write_headers => true, :headers => serializable_header, :encoding => "UTF-8"} :
-          {:encoding => "UTF-8"}
+          {:write_headers => true, :headers => serializable_header, :encoding => 'UTF-8'} :
+          {:encoding => 'UTF-8'}
 
         opts = remove_serializer_class_options(options).merge(opts)
         opts.delete(:include_header)
@@ -27,18 +27,18 @@ module Delineate
 
       # Returns the header row as a CSV string.
       def serialize_header(options = {})
-        opts = {:encoding => "UTF-8"}.merge(remove_serializer_class_options(options))
+        opts = {:encoding => 'UTF-8'}.merge(remove_serializer_class_options(options))
         CSV.generate_line(serializable_header, opts)
       end
 
       # Not implemented yet.
       def serialize_in(csv_string, options = {})
-        raise "Serializing from CSV is not supported at this time. You can inherit a class from CsvSerializer to write a custom importer."
+        raise 'Serializing from CSV is not supported. You can inherit a class from CsvSerializer to write a custom importer.'
       end
 
       # Returns the record's mapped attributes in the serializer's "internal"
       # format. For this class the representation is an array of one or more
-      # rows, one row for each item in teh record's has_many collections. Each
+      # rows, one row for each item in the record's has_many collections. Each
       # row is an array of values ordered as follows:
       #
       #   1. All the record's mapped attributes in map order.
@@ -70,7 +70,7 @@ module Delineate
       end
 
       # Returns the header row as an array of strings, one for each
-      # mapped attribute, including nested assoications. The items
+      # mapped attribute, including nested associations. The items
       # appear in the array in the same order as their corresponding
       # attribute values.
       def serializable_header(prefix = '')
@@ -93,7 +93,7 @@ module Delineate
 
       private
 
-        # The diff here is that if the associaton record(s) is empty, we have to generate
+        # The diff here is that if the association record(s) is empty, we have to generate
         # a new empty record: @record.class.new.build_xxx or @record.class.new.xxx.build
         def add_includes(assoc_type)
           includes = @options.delete(:include)

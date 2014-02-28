@@ -257,7 +257,7 @@ module Delineate
       return if other_attr_map.nil?
 
       @attributes = @attributes.deep_merge(other_attr_map.attributes)
-      @associations.deep_merge!(other_attr_map.associations)
+      @associations = @associations.deep_merge(other_attr_map.associations)
 
       @write_attributes = {:_destroy => :_destroy}
       @attributes.each {|k, v| @write_attributes[k] = (v[:model_attr] || k) unless v[:access] == :ro}
@@ -323,8 +323,10 @@ module Delineate
           raise ArgumentError, "Association '#{association}' in model #{@klass_name} is not defined" if reflection.nil?
           begin
             reflection.klass
-          rescue
-            raise NameError, "Cannot resolve association class '#{reflection.class_name}' from model '#{@klass_name}'"
+          rescue => e
+            msg = "Cannot resolve association class '#{reflection.class_name}' from model '#{@klass_name}'"
+            msg += "\n#{e.message}"
+            raise NameError, msg
           end
         end
       end
@@ -353,7 +355,7 @@ module Delineate
         validate_access_option(options[:access])
         options[:model_attr] = options.delete(:using) if options.key?(:using)
 
-        raise ArgumentError, 'Cannot specify :override or provide block with :polymorphic' if options[:polymorphic] and (blk or options[:override])
+        raise ArgumentError, 'Cannot specify :override or provide block with :polymorphic' if options[:polymorphic] && (blk or options[:override])
         raise ArgumentError, 'Option :override must = :replace or :merge' unless !options.key?(:override) || [:merge, :replace].include?(options[:override])
       end
 
@@ -395,6 +397,12 @@ module Delineate
         end
       end
 
+      def validate_attr_accessor(read_or_write, options)
+        return unless (accessor = options[read_or_write])
+        raise ArgumentError, "Invalid parameter for #{read_or_write}" unless (accessor.is_a?(Symbol) || accessor.is_a?(Proc))
+        accessor
+      end
+
       def validate(map, class_name)
         raise(NameError, "Expected attribute map :#{@name} to be defined for class '#{class_name}'") if map.nil?
         map.resolve! unless map.resolved?
@@ -416,10 +424,9 @@ module Delineate
       end
 
       def define_attr_reader_method(name, model_attr, options)
-        return unless (reader = options[:read])
-        raise ArgumentError, 'Invalid parameter for :read' unless (reader.is_a?(Symbol) || reader.is_a?(Proc))
+        return unless (reader = validate_attr_accessor(:read, options))
 
-        returning(model_attr == name ? "#{name}_#{@name}" : model_attr) do |method_name|
+        returning accessor_method_name(name, model_attr) do |method_name|
           if reader.is_a?(Symbol)
             klass.class_eval %(
               def #{method_name}
@@ -441,10 +448,9 @@ module Delineate
       end
 
       def define_attr_writer_method(name, model_attr, options)
-        return unless (writer = options[:write])
-        raise ArgumentError, 'Invalid parameter for :write' unless (writer.is_a?(Symbol) || writer.is_a?(Proc))
+        return unless (writer = validate_attr_accessor(:write, options))
 
-        returning(model_attr == name ? "#{name}_#{@name}" : model_attr) do |method_name|
+        returning accessor_method_name(name, model_attr) do |method_name|
           if writer.is_a?(Symbol)
             klass.class_eval %(
               def #{method_name}=(value)
@@ -466,6 +472,11 @@ module Delineate
           klass.attr_accessible method_name
         end
       end
+
+      def accessor_method_name(name, model_attr)
+        model_attr == name ? "#{name}_#{@name}" : model_attr
+      end
+
 
     include Resolve
     include Serialization
